@@ -119,4 +119,5 @@ def rel_error(x, y, eps=1e-10):
     """ returns relative error between x and y """
     top = (x - y).abs().max().item()
     bot = (x.abs() + y.abs()).clamp(min=eps).max().item()
+    # print(x,y)
     return top / bot

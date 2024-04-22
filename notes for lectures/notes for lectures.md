@@ -101,6 +101,7 @@ x为图像展成一个列向量
 ![Alt text](images/image-6.png)
 因为你无法画一条线把他们区分开
 
+![alt text](images/fad1b2af5a7eeacc2a5d5ede1f28850.jpg)
 ## SVM loss
 ![Alt text](images/image-7.png)
 - 非常容易得到0损失
@@ -688,26 +689,388 @@ multi-layer RNN
 ![alt text](images/image-108.png)
 
 
+# L13
+## 注意力机制
+![alt text](image-109.png)
+RNN处理文本翻译（sequence to sequence任务）结构：
+前文特征c = encoder输出的隐藏层向量ht，状态特征s0也由ht得来，y0 = [start]，y0，s0，c输入decoder产生y1，s1，再将y1、s1、c输入decoder产生y2，s2，由此递推下去
 
+问题：如果输入的文本序列过长，让c去统括这么长的特征信息是不合理的
 
+解决：为decoder解码的每一步都生成一个c，且让decoder自己去选择应该关注输入序列的特征的哪一部分，这就是注意力机制
 
+![alt text](image-110.png)
+方法是给每一个隐藏层特征一个权重ei，将这些权重进行softmax，然后将这些权重和隐藏层特征相乘，得到一个加权的隐藏层特征，再将这些加权的隐藏层特征相加，得到一个c
 
+权重高的特征，说明decoder在这一步应该重点关注这个特征；权重低的特征，说明decoder在这一步不太关心这个特征
 
+权重ei的计算方法是将前一个状态特征st-1和输入序列对应的隐藏层特征使用mlp计算出ei
 
+得到ct之后，st = f(st-1, yt-1, ct)
 
+由于权重是mlp得出的，所以是让模型自己学习到根据当前状态特征应该关注输入序列的哪一部分
 
+![alt text](image-111.png)
+扩展：输入序列可以不是文本，而是其他形式的数据。
+比如输入是一张图像，我们可以将图像分为多个网格，每个网格通过cnn提取隐藏层特征，然后通过注意力机制，让decoder自己选择应该关注图像的哪一部分，然后生成文本，这就是image captioning
 
+## attention layer
+q类比为decoder的隐藏层特征，x类比为encoder的隐藏层特征
+### 单个q
+query vector q(Dq)
 
+input vector x(Nx * Dx)
 
+similarity fuction(scaled dot product)：我们将q和xi的内积除以根号下Dq（q的维度），这么做的目的是为了让内积的值不会因为q的维度过大而导致内积的值过大，导致通过softmax之后有一个值接近1，其他值接近0，这样就会导致梯度消失（接近0的值对应的特征向量的梯度趋于0）
 
+a dot b = |a| * |b| * cosθ
+q dot xi = |q| * |xi| * cosθ
+|q|不用归一化，因为每一项都有，所以不影响softmax的结果；但是|xi|不一样，所以我们要归一化：q * xi / sqrt(Dq)
 
+similarity: ei = f(q, xi) = q * xi / sqrt(Dq)
 
+attention weight: a = softmax(e)
 
+### 多维q
 
+query vector Q(Nq * Dq)
 
+input vector X(Nx * Dx)
 
+similarity function: E = f(Q, X) = Q * transpose(X) / sqrt(Dq)
 
+attention weight: A = softmax(E,dim=1)
 
+output: Y = A * X = sum(Ai * Xi)
+
+### 区分key和value
+- query vector Q(Nq * Dq)
+- input vector X(Nx * Dx)
+- key matrix Wk(Dx * Dq)
+- value matrix Wv(Dx * Dv)
+
+目的是给模型更加多的如何使用input vector的选择性：即对于每一个input vector，我们可以提取其中的部分信息与query vector进行对比，而不是全部信息，剩余的关键信息可以通过value matrix提供；
+拿信息检索系统举例，query vector是用户输入的问题，input vector是文档，key matrix是文档的关键词，value matrix是文档的内容；我们不期望将文档的所有内容都与用户的问题进行对比，而是只提取文档的关键词与用户的问题进行对比，然后将文档的内容提供给用户
+
+- key vector K = X * Wk
+- value vector V = X * Wv
+- similarity function: E = Q * transpose(K) / sqrt(Dq)
+- attention weight: A = softmax(E,dim=1)
+- output: Y = A * V = sum(Ai * Vi)：A广播到Nx * Dv，然后与V相乘
+
+### self-attention layer
+query vector Q由input vector X得到
+
+- input vector X(Nx * Dx)
+- key matrix Wk(Dx * Dq)
+- value matrix Wv(Dx * Dv)
+- query matrix Wq(Dx * Dq)
+
+- key vector K(Nx * Dq) = X * Wk
+- value vector V(Nx * Dv) = X * Wv
+- query vector Q = X * Wq
+- similarity function: E(Nx * Nx) = Q * transpose(K) / sqrt(Dq)
+- attention weight: A(Nx) = softmax(E,dim=1)
+- output: Y(Nx * Dv) = A * V = sum(Ai * Vi)
+
+![alt text](image-112.png)
+self-attention layer是置换等价的：即对于一个序列，我们可以将序列中的任意两个元素进行置换，然后通过self-attention layer仍然能够得到期望的结果；比如将input vector中每一行的顺序调换一下，然后通过self-attention layer，得到的output vector在每一行的顺序也是调换了的，但是每一行的内容是不变的，仍然是一一对应的：说明self-attention layer并不关心输入序列的顺序，只关心序列中的元素之间的关系！
+
+所以当你需要模型去关心位置信息的时候，你需要加入位置编码
+
+### masked self-attention layer
+在训练的时候，我们不希望模型能够看到未来的信息，所以我们需要mask掉未来的信息
+![alt text](image-113.png)
+mask掉未来的信息，即将未来的信息的权重设置为负无穷，这样在softmax之后，未来的信息的权重就会变为0
+
+### multi-head attention layer
+number of heads H
+将input vector分为H份，每一份都通过self-attention layer，然后将H份的output vector拼接在一起，得到最终的output vector
+
+## examle: CNN + self-attention
+![alt text](image-114.png)
+self-attention module
+
+## 三种处理序列数据的方式
+- RNN：逐步处理序列数据，每一步都会保留历史信息
+  - 好处是可以处理任意长度的序列数据，RNN会记住所有历史信息
+  - 坏处是计算代价大，且无法并行计算，梯度消失/爆炸
+- 1D CNN：卷积处理序列数据，每一步都会保留局部信息
+  - 好处是计算代价小，可以并行计算，梯度消失/爆炸问题不严重
+  - 坏处是只能处理固定长度的序列数据，无法处理任意长度的序列数据，如果序列过长的话，CNN可能会丢失一些信息
+- self-attention：每一步都会保留全局信息
+  - 好处是可以处理任意长度的序列数据，且不会丢失信息，因为每一个output vector都统括了所有的input vector的信息；以及可以并行计算
+  - 坏处是要进行多次大矩阵乘法，需要消耗大量内存
+  - 但是self-attention的计算代价是可以接受的，因为我们可以使用GPU进行并行计算
+
+## transformer
+### transformer block
+![alt text](image-115.png)
+比较有趣的点是：layer normalization（normalize输入向量中不是batch的某个维度）和mlp都只是对输入序列各向量进行独立的运算，只有self-attention layer是对序列中的各个元素进行交互运算，所以是非常利于并行计算的
+### transformer
+transformer由多个transformer block组成
+### 实际使用
+可以使用大量文本数据来训练一个transformer模型，然后将这个模型应用于很多下游任务，比如文本分类、文本生成、文本翻译等等
+![alt text](image-116.png)
+
+# L14
+see what's going on in the network
+## visualization
+### 分类器的可视化
+常用，分类器通常为一个hidden_dim * num_classes的矩阵，为每个类别输出一个预测分数
+
+而输出的类别分数由通过分类器的高维特征向量 点积 分类器的某一行得到
+
+点积的值越大，说明高维特征向量越接近分类器的某一行，那么可以说分类器的这一行就是将这个类别转换成特征向量，如果两个特征向量接近，就被分为一类
+
+所以我们可以可视化分类器，看看每一个类别的特征向量是什么样的，从而理解分类器是如何工作的
+### filter visualization
+可视化卷积核
+
+卷积核的可视化是通过将卷积核的权重矩阵转换为图像，然后显示出来；这样我们就可以大致了解卷积核是在检测什么样的特征，比如边缘、纹理、颜色等等
+
+但随着网络的加深，卷积核的可视化就看不懂了，因为检测的特征变得更加抽象、隐晦
+
+### 对分类器前一层得到的高维特征向量进行可视化
+#### nearest neighbor
+可以对这个特征向量使用nearest neighbor的方法，找到哪些图像的特征向量互相比较接近，那么它们就是相近的图像
+#### 降维
+使用PCA、t-SNE等方法将高维特征向量降维到2维，然后可视化
+
+### activation visualization
+可视化激活函数
+
+可以可视化激活函数的输出，看看哪些神经元被激活了，从而了解网络是如何工作的
+
+### maximally activating patches
+![alt text](image-117.png)
+可以找到哪些patch能够最大激活某个神经元，从而了解这个神经元是如何工作的
+
+比如输入很多张图片到网络中，看看某一层的某个channel的输出，看看哪些图片得到的是最大的输出，那么这些图片就是这个channel所关注的特征
+
+### occlusion
+遮蔽掉图像的某一部分，然后看看网络的输出有什么变化
+
+比如在图像分类任务中，遮蔽掉图像的某一部分，然后这一类别的预测概率发生了什么变化
+
+我们可以移动这个遮蔽的区域，扫描整张图片，输出一个热力图，描述的是各个区域像素点被遮蔽后得到的准确率，这样就可以知道哪些区域是网络关注的
+
+这样也可以知道网络时候真的是在关注我们认为的特征，而不是关注了其他特征而恰巧分类正确
+
+### backpropagation
+可以通过反向传播，找到哪些像素点有最大的影响（因为梯度可以衡量改变一点输入的值，对输出产生多大的影响，梯度越大说明越重要）
+
+我们可以查看反向传播到原始图像的梯度，进行可视化，看看哪些像素点有最大的影响
+
+我们不仅可以查看原始图像对最终输出的影响，我们也可以选定某个特定的神经元，将这个神经元的梯度反向传播到原始图像，查看哪些像素点对这个神经元的激活有最大的影响
+
+guided propagation：只保留正的梯度，将负的梯度置为0，这样可以更好地可视化（原因不清楚）；当然，通过relu的负值本身梯度就该被置为0
+
+### gradient ascent
+不是训练模型，而是固定已经训练好的模型的参数，训练“输入图像”，使得某个神经元的激活最大化，即最大化某个神经元的输出
+
+![alt text](image-118.png)
+初始化一个zero image，然后通过梯度上升，改变输入图片，使得某个神经元的激活最大化
+
+这样经过可视化之后，可以让我们了解模型关注的是何种图像特征
+
+生成对抗样本：
+![alt text](image-119.png)
+选择任意一张图像，选择任意一个不同的类别，然后通过梯度上升，改变输入图片，使得模型将这张图片分类为这一个不同的类别，就生成了对抗样本
+
+### feature inversion
+也使用gradient ascent的思想
+
+![alt text](image-120.png)
+给定一个图像经过CNN之后的高维特征向量，训练另外一个图像，使得这个图像的高维特征向量与给定的高维特征向量尽可能接近，且看起来尽可能自然（通过正则化）
+
+![alt text](image-121.png)
+y为原始图像，之后的都是从头开始训练生成的图像，让它们和原始图像在relu之后特征向量尽可能接近
+
+这样可以看出多层网络每一层提取了哪些特征
+
+### deep dream
+![alt text](image-122.png)
+不是合成图像，而是对原始图像进行修改，使得网络某一层对原始图像的激活最大化
+
+### texture synthesis
+任务：输入一个小纹理，将其扩展成一张大的图像
+
+gram matrix：提取图像的特征，而忽略其空间信息
+
+![alt text](image-124.png)
+具体做法：
+- 对于某一层的输出C * H * W，提取某一个channel的向量（即选择H = Hi，W = Wj，得到那一通道的向量），再提取其他通道的向量，将两个向量进行外积，得到一个C * C的矩阵
+![alt text](image-123.png)
+- 任取两个channel进行此操作，然后把所有得到的C * C矩阵取平均，得到一个C * C的矩阵，这个矩阵就是gram matrix
+
+此gram matrix已经丢掉了所有的空间信息，只保留了通道之间的相关性
+
+![alt text](image-125.png)
+如何生成纹理：
+- 预训练一个包含CNN的网络
+- 对于输入纹理，生成一个gram matrix
+- 生成一个随机的图像，然后提取gram matrix
+- 训练此随机图像，使得此图像得到的gram matrix与输入纹理的gram matrix尽可能接近（设定loss为L2距离）
+- 得到的图像就是我们想要的
+
+### neural style transfer: feature inversion + texture synthesis
+![alt text](image-126.png)
+输出图像的高维特征向量与内容图像的高维特征向量尽可能接近，与风格图像的gram matrix尽可能接近
+
+![alt text](image-127.png)
+如果增加gram matrix的权重，那么图像的风格就会更加接近风格图像；如果增加内容图像的权重，那么图像的内容就会更加接近内容图像
+
+multiple style images:
+![alt text](image-128.png)
+
+fast neural style transfer:
+![alt text](image-129.png)
+
+normalization in fast neural style transfer: instance normalization
+![alt text](image-130.png)
+
+# L15
+object detection
+
+## 定义
+input: rgb image
+
+output:
+- category label
+- bounding box(x,y,width,height)
+
+## 挑战
+- 多个目标，需要把所有目标都检测出来
+- 多个目标的类别可能不同
+- 图片更大，分辨率更高
+
+## detecting a single object
+![alt text](image-131.png)
+- category label: softmax loss
+- bounding box: L2 loss between predicted bounding box and ground truth bounding box
+
+final loss = λ1 * softmax loss + λ2 * L2 loss
+
+## detecting multiple objects
+### sliding window
+将目标检测问题转化为分类问题，将图像切分为多个窗口，然后对每一个窗口进行分类；加入一个新的类别：背景
+
+具体做法是：将图像切分为多个窗口，然后对每一个窗口进行分类；注意因为要考虑每个目标的大小不一样，而且可能重叠，所以窗口大小需要从1遍历到图片大小
+
+![alt text](image-132.png)
+这就导致了计算代价很大
+
+### region proposals
+![alt text](image-133.png)
+
+### R-CNN: Region-based Convolutional Neural Networks
+#### train
+- region proposals：使用selective search算法，生成2000个region proposals（候选区域）
+- 将所有候选区域resize到相同大小
+- 将所有候选区域输入到CNN中，得到特征向量
+- 将特征向量输入到SVM中，得到分类结果
+- bounding box regression：将特征向量输入到一个线性回归器中，得到bounding box，并不是直接输出bounding box，而是预测变换的参数，然后将这些参数应用到候选区域上，得到bounding box
+- 根据分类结果和bounding box，计算loss
+- 反向传播，更新CNN的权重（可选，其实可以选择已经在大数据集上预训练好的CNN）
+- fine-tune：将CNN的权重固定，然后训练SVM和bounding box regression，这样即精修bounding box，让其更加准确
+![alt text](image-134.png)
+
+bounding box regression：
+实际上输出的是4个变换值(tx,ty,tw,th)，bounding box是由这四个值变换得到的假设region proposal为(px,py,pw,ph)：
+- bx = tx * pw + px
+- by = ty * ph + py
+- bw = pw * exp(tw)
+- bh = ph * exp(th)
+
+为何要这样做：因为这样我们的预测是无关于region proposal的位置信息的，而真实情况中图片左上角的物体和图片右下角的物体是一样的，所以CNN不应该去关心位置信息
+
+> 图中的conv net是共享权重的，虽然画了很多个
+
+#### test
+![alt text](image-135.png)
+
+#### evaluate
+IoU: intersection over union
+![alt text](image-136.png)
+
+#### overlapping boxes
+许多检测框重叠在一起
+
+解决：
+Non-Max Suppression：非极大值抑制
+![alt text](image-137.png)
+比如有多个检测框检测为狗（概率不同），我们将这些检测框根据概率排序，从最高概率的开始选取，计算这个检测框与其他低概率的检测框的IoU，如果IoU大于某个阈值，那么就删除低概率的检测框；然后继续选取下一个检测框，直到所有检测框都被处理
+
+但问题是如果真的有很多物体确实是重叠在一起的，那么这种方法就会删除一些检测到的物体
+
+### evaluate object detectors
+mean average precision (mAP)
+![alt text](image-138.png)
+
+mAP@0.5：IoU > 0.5的检测框
+mAP@0.75：IoU > 0.75的检测框
+![alt text](image-139.png)
+
+### fast R-CNN
+backbone network：使用CNN提取特征的网络，通常是VGG16、ResNet、AlexNet等
+
+将整张图片输入backbone network，得到feature map，然后根据region proposals，我们crop出我们关心的区域的特征（从feature map中），得到region features，然后经过一个per-region network（轻量级的，很快，可以是简单的mlp）得到分类结果和bounding box
+![alt text](image-140.png)
+
+重点是非常耗时的CNN只需要运行一次，然后我们只需要crop出我们关心的区域的特征，然后经过一个轻量级的网络，就可以得到分类结果和bounding box
+
+fast-RCNN的主要计算时间在于计算region proposals
+
+#### cropping features: RoI pooling
+![alt text](image-141.png)
+对于一张图片，我们将其经过一个CNN网络得到一张大的feature map，之后对于我们感兴趣的区域，根据CNN的运算规则，其同样映射到了feature map上，我们找到这个区域，将其划分为7 * 7的网格，然后对每一个网格进行max pooling，得到一个7 * 7的最终特征向量
+
+这样的好处是无论我们感兴趣的区域大小是多少，我们都可以将其映射为7 * 7的特征向量，这样我们就可以将不同大小的区域输入到per-region network中
+
+Rol align：使用线性插值
+![alt text](image-142.png)
+
+### faster R-CNN
+使用RPN（region proposal network）来生成region proposals
+
+#### RPN
+anchor boxes：预定义的K个bounding box，比如大小为128 * 128，256 * 256，512 * 512等等，然后在图像的每一个像素点上都生成这些anchor boxes，然后对每一个anchor box，我们通过一个卷积操作预测它包含待检测物体（正例）还是不包含待检测物体（负例），会输出两个分数：正例的分数和负例的分数，再通过一个softmax计算概率；反向传播计算梯度的时候，将其当成一个二分类问题来处理，计算loss和梯度
+
+对于每个anchor box，除了输出它的预测分数，我们还通过另外一个卷积操作输出它的bounding box的变换参数，即将anchor box变换为真实的bounding box的参数
+
+在测试的时候，根据anchor box的预测分数，我们选择一些高分的anchor box（比如取前300个），然后根据bounding box的变换参数，将anchor box变换为真实的bounding box
+
+> ps: 其实只输出一个预测分数使用logistic regression也可以，> 0 为正例，< 0 为负例
+
+超参数：每点上anchor box的个数K，anchor box的大小和长宽比等等
+
+### single-stage object detection
+在faster R-CNN的基础上，将RPN和per-region network合并为一个网络，即直接输出分类结果和bounding box
+![alt text](image-143.png)
+即对于预测正例还是负例的卷积操作，我们扩展一下，直接输出C+1个类别（包含背景类别）的预测分数，这样我们就可以不需要per-region network了，相当于把region proposals和分类&检测网络合并了
+
+YOLO：You Only Look Once
+
+当然，虽然这样做会减少计算代价，但是准确率不如two-stage object detection
+
+### FPN: Feature Pyramid Network
+为了解决多尺度的问题，即有些物体很大，包含很多像素点，但也有些物体很小，只包含很少的像素点，而在faster R-CNN中，我们只使用了最后一层的feature map，这样可能会导致小物体的信息丢失（比如我们得到的特征图是60 * 60，而原图是600 * 600，那么特征图上一个像素点对应原图上的10 * 10的像素点，那么原图上可能有许多小于10 * 10像素点的物体，它们的信息就容易丢失，或说至少位置信息容易丢失）
+
+为了处理这种多尺度物体检测的问题，一种方法是：featurized image pyramid。这种方式就是先把图片弄成不同尺寸的，然后再对每种尺寸的图片提取不同尺度的特征，再对每个尺度的特征都进行单独的预测，这种方式的优点是不同尺度的特征都可以包含很丰富的语义信息，但是缺点就是时间成本太高。
+
+![alt text](image-144.png)
+另一种更好的方法是：Feature Pyramid Network（FPN）。FPN的思想是：利用CNN的特征金字塔，即CNN的不同层的feature map，然后将这些feature map进行融合，得到一个更加丰富的特征金字塔，然后再对每一层进行预测。
+
+底层特征往往包含物体的位置信息，高层特征往往包含物体的语义信息，所以我们可以将高层特征和底层特征进行融合，让识别和定位都更加准确
+
+![alt text](image-145.png)
+网络主要分为两部分：
+- bottom-up：即自底向上进行cnn得到特征图的过程
+- top-down：对高层特征图进行上采样（越高层的特征图往往越小），通常的方法是最近邻插值法，使得高层特征图的大小和低层特征图的大小一样
+- 1 * 1 convolution：对特征图进行1 * 1的卷积操作，使得其通道数互相一致
+- lateral connections：将高层特征图和底层特征图进行融合，通常是简单的逐元素相加，得到一个更加丰富的特征图
+- 3 * 3 convolution：对融合后的特征图进行3 * 3的卷积操作，得到最终的特征图
 
 
 
