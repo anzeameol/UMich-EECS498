@@ -892,7 +892,23 @@ class FasterRCNN(nn.Module):
         # `FCOSPredictionNetwork` for this code block.
         cls_pred = []
         # Replace "pass" statement with your code
-        pass
+
+        for stem_channel in stem_channels:
+            conv = nn.Conv2d(
+                in_channels=64,
+                out_channels=stem_channel,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+            )
+            conv.bias.data.zero_()
+            conv.weight.data.normal_(mean=0, std=0.01)
+            cls_pred.append(conv)
+
+            relu = nn.ReLU()
+            cls_pred.append(relu)
+
+            in_channels = stem_channel
 
         ######################################################################
         # TODO: Add an `nn.Flatten` module to `cls_pred`, followed by a linear
@@ -901,7 +917,10 @@ class FasterRCNN(nn.Module):
         # shape from `nn.Flatten` layer.
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        flatten = nn.Flatten(start_dim=1, end_dim=-1)
+        linear = nn.Linear(in_channels * roi_size[0] * roi_size[1], num_classes + 1)
+        cls_pred.append(flatten)
+        cls_pred.append(linear)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -952,7 +971,16 @@ class FasterRCNN(nn.Module):
             level_stride = self.backbone.fpn_strides[level_name]
 
             # Replace "pass" statement with your code
-            pass
+            for idx in range(len(level_props)):
+                level_props[idx] = level_props[idx].float()
+
+            roi_feats = torchvision.ops.roi_align(
+                input=level_feats,
+                boxes=level_props,
+                output_size=self.roi_size,
+                spatial_scale=level_stride,
+                aligned=True,
+            )
             ##################################################################
             #                         END OF YOUR CODE                       #
             ##################################################################
@@ -998,7 +1026,11 @@ class FasterRCNN(nn.Module):
             )
             gt_boxes_per_image = gt_boxes[_idx]
             # Replace "pass" statement with your code
-            pass
+            matched_gt_boxes.append(
+                rcnn_match_anchors_to_gt(
+                    proposals_per_image, gt_boxes_per_image, (0.5, 0.5)
+                )
+            )
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -1026,7 +1058,23 @@ class FasterRCNN(nn.Module):
         # Feel free to delete this line: (but keep variable names same)
         loss_cls = None
         # Replace "pass" statement with your code
-        pass
+        """
+        focal loss: deal with the class imbalance
+        """
+        matched_gt_boxes = matched_gt_boxes.reshape(-1, 5)
+        fg_idx, bg_idx = sample_rpn_training(
+            matched_gt_boxes, matched_gt_boxes.shape[0], 0.25
+        )
+        pred_cls_logits = pred_cls_logits.reshape(-1, self.num_classes + 1)
+        gt_cls_logits = torch.zeros(
+            size=(matched_gt_boxes.shape[0], self.num_classes + 1),
+            dtype=pred_cls_logits.dtype,
+            device=pred_cls_logits.device,
+        )
+        fg_class = matched_gt_boxes[fg_idx, 4].long()
+        gt_cls_logits[fg_idx, fg_class] = 1
+        gt_cls_logits[bg_idx, -1] = -1
+        loss_cls = F.cross_entropy(pred_cls_logits, gt_cls_logits)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -1097,7 +1145,9 @@ class FasterRCNN(nn.Module):
         ######################################################################
         pred_scores, pred_classes = None, None
         # Replace "pass" statement with your code
-        pass
+        pred_scores = F.softmax(pred_cls_logits, dim=-1)
+        max_scores,pred_classes = pred_scores.max(dim=-1)
+        pred_boxes = pred_boxes[max_scores > test_score_thresh]
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
