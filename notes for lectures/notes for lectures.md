@@ -245,6 +245,11 @@ padding：在图片的外围填充一圈的0
 receptive field可以叠加  
 ![Alt text](images/image-32.png)
 
+连续的N层网络（每层为CNN / pooling层），每层拥有kernel size = ki，stride = si，padding = pi，记RFi为第i层输出的特征向量，RF0 = 1，s0 = k0 = 1，Si = s0~si-1的累乘，有如下公式：
+`RFi = RFi-1 + (ki - 1) * Si`
+
+RFi可以看作第i层feature map上面一个像素点对应原图的多少个像素点 
+
 ## stride
 filter移动窗口的步长
 output = (W - K + 2 * P) / S + 1  

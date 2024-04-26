@@ -127,6 +127,7 @@ class VOC2007DetectionTiny(torch.utils.data.Dataset):
         normalize_tens = torch.tensor(
             [original_width, original_height, original_width, original_height]
         )
+        gt_boxes = gt_boxes.double()
         gt_boxes /= normalize_tens[None, :]
 
         # Transform input image to CHW tensor.
