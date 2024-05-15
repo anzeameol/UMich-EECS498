@@ -892,10 +892,10 @@ class FasterRCNN(nn.Module):
         # `FCOSPredictionNetwork` for this code block.
         cls_pred = []
         # Replace "pass" statement with your code
-
+        in_channels = self.backbone.out_channels
         for stem_channel in stem_channels:
             conv = nn.Conv2d(
-                in_channels=64,
+                in_channels=in_channels,
                 out_channels=stem_channel,
                 kernel_size=3,
                 stride=1,
@@ -1146,7 +1146,7 @@ class FasterRCNN(nn.Module):
         pred_scores, pred_classes = None, None
         # Replace "pass" statement with your code
         pred_scores = F.softmax(pred_cls_logits, dim=-1)
-        max_scores,pred_classes = pred_scores.max(dim=-1)
+        max_scores, pred_classes = pred_scores.max(dim=-1)
         pred_boxes = pred_boxes[max_scores > test_score_thresh]
         ######################################################################
         #                            END OF YOUR CODE                        #
