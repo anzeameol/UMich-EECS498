@@ -775,8 +775,8 @@ query vector Q由input vector X得到
 - value vector V(Nx * Dv) = X * Wv
 - query vector Q = X * Wq
 - similarity function: E(Nx * Nx) = Q * transpose(K) / sqrt(Dq)
-- attention weight: A(Nx) = softmax(E,dim=1)
-- output: Y(Nx * Dv) = A * V = sum(Ai * Vi)
+- attention weight: A(Nx * Nx) = softmax(E,dim=1)
+- output: Y(Nx * Dv) = A * V
 
 ![alt text](image-112.png)
 self-attention layer是置换等价的：即对于一个序列，我们可以将序列中的任意两个元素进行置换，然后通过self-attention layer仍然能够得到期望的结果；比如将input vector中每一行的顺序调换一下，然后通过self-attention layer，得到的output vector在每一行的顺序也是调换了的，但是每一行的内容是不变的，仍然是一一对应的：说明self-attention layer并不关心输入序列的顺序，只关心序列中的元素之间的关系！
@@ -1059,7 +1059,7 @@ YOLO：You Only Look Once
 
 当然，虽然这样做会减少计算代价，但是准确率不如two-stage object detection
 
-### FPN: Feature Pyramid Network
+## FPN: Feature Pyramid Network
 为了解决多尺度的问题，即有些物体很大，包含很多像素点，但也有些物体很小，只包含很少的像素点，而在faster R-CNN中，我们只使用了最后一层的feature map，这样可能会导致小物体的信息丢失（比如我们得到的特征图是60 * 60，而原图是600 * 600，那么特征图上一个像素点对应原图上的10 * 10的像素点，那么原图上可能有许多小于10 * 10像素点的物体，它们的信息就容易丢失，或说至少位置信息容易丢失）
 
 为了处理这种多尺度物体检测的问题，一种方法是：featurized image pyramid。这种方式就是先把图片弄成不同尺寸的，然后再对每种尺寸的图片提取不同尺度的特征，再对每个尺度的特征都进行单独的预测，这种方式的优点是不同尺度的特征都可以包含很丰富的语义信息，但是缺点就是时间成本太高。
@@ -1077,9 +1077,593 @@ YOLO：You Only Look Once
 - lateral connections：将高层特征图和底层特征图进行融合，通常是简单的逐元素相加，得到一个更加丰富的特征图
 - 3 * 3 convolution：对融合后的特征图进行3 * 3的卷积操作，得到最终的特征图
 
+# L16
+## 回顾
+### rcnn region proposals
+- region proposals: 启发式算法，如selective search，生成若干个region proposals
+- 将所有的region proposals分类：positive，negative，neutral，通过计算它们和ground truth bounding box的IoU（因为有很多ground truth bounding box，所以取最大值），并设置两个阈值来区分positive，negative和neutral
+- 在训练过程中，我们会忽略neutral的region proposals（因为它们会迷惑模型），然后crop出positive和negative的region proposals，resize到相同大小
+
+### roi pooling
+![alt text](image-146.png)
+- 输入原始图像，通过region proposal network，映射到feature map的一块区域上
+- 这一块区域可能不对齐feature map的像素网格，所以我们需要snap到最近的像素网格，然后根据我们需要的region feature的大小，比如需要7 * 7的大小，那就将其划分为7 * 7的网格（这个划分可能比较粗糙），然后对每一个网格进行max pooling，得到7 * 7的region feature
+- 这些操作的过程中可能出现misalignment的情况，因为featuer map的大小往往比原图要小，它的空间分辨率也往往比原图小，所以在snap的过程中，很可能出现不对齐的情况，即我们的region feature的网格和原图的网格不对齐
+- 还有一个问题是，由于snap的操作，我们无法将梯度反向传播到region proposal network中。snap操作：input为feature map和resion proposal对应到feature map上的坐标（可能不完全和feature map的像素网格对齐），output为feature map上的坐标。但是，我们是无法将梯度反向传播到feature map上的坐标的，因为snap操作是不可导的，所以我们也无法将梯度反向传播到region proposal network中
+- snap操作有两种做法：
+  - 一是先根据region feature划分网格，然后对每个网格单独进行snap；
+  - 二是先对feature map上的这一块区域进行snap，然后把snap到的区域进行划分网格
+
+### roi align
+![alt text](image-147.png)
+- 为了解决roi pooling的问题，我们引入了roi align，即使用双线性插值，使得我们的region feature的网格和原图的网格对齐
+- 而且，roi align是可导的，所以我们可以将梯度反向传播到region proposal network中
+- 操作是，我们先将region proposal对应到feature map上的坐标（不完全对齐feature map的像素网格），根据region feature的大小划分网格（每个网格对应region feature上的一个像素点），但我们不是snap，而是在这一块区域进行采样，然后对于这些采样的像素点，进行双线性插值，得到采样的feature，然后对这些采样的feature进行pooling操作，得到region feature上对应像素点的feature值；对region feature上所有像素点都这样做就得到region feature了
+- 双线性插值：找到相邻的最近4个像素点，将它们的值融合在一起，系数为横坐标差值的绝对值乘以纵坐标差值的绝对值
+
+### cornerNet: detection without anchors
+- bounding box的表示，使用左上角和右下角的坐标值
+- 对于每个像素点，预测它们是某个目标的bounding box的左上角的概率，也预测它们是某个目标的bounding box的右下角的概率
+- embedding vector：对于每个像素点，也预测一个embedding vector，然后“希望”同一个bounding box的左上角和右下角的像素点对应的embedding vector是类似的；这是为了处理在predict的时候，我们需要将左上角和右下角的像素点进行配对
+
+### FCOS
+[FCOS](pdf/FCOS.pdf)
+
+## semantic segmentation
+### task
+- 对于一张输入的图片中的每个像素点，给他打个类别标签
+
+### fully convolutional network
+![alt text](image-148.png)
+问题：
+- 感受野的递增是缓慢的，因为我们要在相邻层之间保持输入输出大小都是整张图片的大小，所以一般用3 * 3的卷积核，stride = padding = 1，这样感受野的公式是`rf = 1 + 2 * L`，其中L表示多少层，感受野的大小是缓慢的线性递增的，所以如果需要获得较大的感受野，那么需要很多层CNN
+- 在高分辨率的图像上进行CNN是非常耗时的
+
+### fully convolutional network改进
+![alt text](image-149.png)
+- downsampling + upsampling
+
+#### upsampling methods
+##### unpooling
+![alt text](image-150.png)
+
+##### bilinear interpolation
+![alt text](image-151.png)
+对于一个a * a的网格，如果要将其upsampling为一个(k * a) * (k * a)的网格，则在每两个像素点之间再多采样k - 1个像素点（等距的采样），然后对所有新采样的像素点进行双线性差值算法，得到它们的值
+
+其实就是对网络进行更加精细化的采样，然后对采样点进行双线性插值
+
+这样的upsampling会比较平滑
+
+##### max unpooling
+![alt text](image-152.png)
+此操作不再是一个单独的网络层，而是要和前面的max pooling层相关联
+
+假设前面有一个max pooling层进行downsampling，我们需要使用max unpooling将其upsampling到原来的大小，那么我们需要记住之前的max pooling层取最大值的位置，然后在max unpooling的时候，先扩大到原来的大小，然后把特征图每一个值放到最大值的位置上，其他位置填0
+
+> 如果你的downsampling用的是average pooling，那么upsampling往往采用bilinear interpolation或者bicubic interpolation；
+> 如果你的downsampling用的是max pooling，那么upsampling往往采用max unpooling
+
+##### learnable upsampling: Transposed Convolution
+![alt text](image-153.png)
+
+为何叫Transposed Convolution：
+![alt text](image-154.png)
+
+### fully convolutional network完整细节
+![alt text](image-155.png)
+
+## instance segmentation
+在semantic segmentation的基础上，更进一步的要求：要求区分同一类别的不同物体
+
+task：
+- 检测出图片中的所有目标
+- 对图片中的每个像素点，识别它是哪个目标（或者是背景）
+
+### mask RCNN
+在预测类别和bounding box的分支网络中额外加一个分支预测mask
+
+![alt text](image-156.png)
+
+这个mask的作用就是将对应类别的目标在目标检测框中标识出来，mask的大小和目标检测框的大小是一致的，用mask的值来决定每个像素点是否遮蔽
+
+## 其他任务
+### panoptic segmentation
+![alt text](image-157.png)
+
+### human keypoint
+![alt text](image-158.png)
+
+# L17
+## two problem
+1. input：image，output：3d shape
+2. input：3d shape，output：classification label
+![alt text](image-159.png)
+
+其他topics：
+![alt text](image-160.png)
+
+## 3d shape representations
+- depth map
+- voxel grid
+- implicit surface
+- pointcloud
+- mesh
+
+### depth map
+深度图：对于图片上的每个像素点，给出它到照相机的距离
+
+RGBD image：RGB image + depth image
+
+问题：无法表示被遮挡的物体，因为传感器无法扫描到被遮挡的物体
+
+#### predicting depth map
+可以用类似semantic segmentation中使用的fully convolutional network来预测depth image
+![alt text](image-161.png)
+
+问题：scale/depth ambiguity：根据进大远小的原则，进的小物体和远的大物体很可能在输入图片中是相似的，但是它们的深度有很大的不同，这让模型无法区分
+![alt text](image-162.png)
+
+### surface normal
+![alt text](image-163.png)
+
+#### predicting normals
+![alt text](image-164.png)
+
+### voxel grid
+![alt text](image-165.png)
+将3d空间网格化，然后用一个mask表示这个网格存不存在像素方块
+
+相当于3d的像素点
+
+困难点：
+- 需要很高的空间上的精细度，来解析一个物体的空间结构，因为一个物体的空间结构可能是非常复杂的
+
+#### processing voxel grid: 3D convolution
+![alt text](image-166.png)
+
+#### generating voxel grid: 3D CNN
+![alt text](image-167.png)
+
+中间的操作：先使用2d cnn获得C * H * W的feature，然后通过一个全连接层，再reshape成一个C * D * H * W的feature，然后再进行3d cnn操作
+
+缺点：3d conv操作非常耗时
+
+#### generating voxel grid: voxel tubes
+![alt text](image-168.png)
+
+用2d cnn代替3d cnn：假设我们需要得到V * V * V的voxel grid，那么我们最后一层使用V个filter，并将通道数视作一个维度，这样就可以得到V * V * V的voxel grid
+
+#### voxel problem
+- memory usage：voxel grid的大小是V * V * V，所以需要很大的内存；解决方法有：oct-tree，nestsd shape layers
+
+### implicit surface
+学习到一个函数，输入是3d坐标，输出是一个值，这个值表示这个点在物体内部的概率
+![alt text](image-169.png)
+
+可以通过对3d shape的采样来构建数据集，通过数据集训练一个复杂的方程，来预测3d坐标点是否在物体内部；在测试阶段，可以通过重新采样点，来构建3d shape
+
+### pointcloud
+![alt text](image-170.png)
+点云数据的关键点在于：输入点的顺序是无关的，即点云是无序的，应该把它看作一个点集
+
+模型应该维持这个性质
+#### pointnet
+![alt text](image-171.png)
+
+#### generating pointcloud
+![alt text](image-172.png)
+
+##### loss function
+chamfer distance（CD距离）：两个点云之间的距离
+![alt text](image-173.png)
+
+### mesh
+![alt text](image-174.png)
+
+#### pixel2mesh
+![alt text](image-175.png)
+
+- 从一个初始化的模板mesh开始，不断迭代使得mesh更加的精细化（iterative refinement）
+- mesh deformation：模型输出对mesh的每个顶点的变换，然后将这些变换应用到模板mesh上，得到变换的mesh
+  - 局限性：因为mesh必须从一个初始化的模板mesh开始，然后经过几何变换得到产出mesh，但是几何变换是会被空间拓扑的一些性质所限定的，所以这个初始化的模板mesh的空间拓扑结构会限制产出的mesh，比如你无法通过几何变换将一个球体转化为一个甜甜圈一样的几何体
+- graph convolution：
+  - ![alt text](image-176.png)
+  - 对于图的每个节点，对它和与它相连的节点进行卷积操作，得到新的节点特征
+  - 相邻节点的权重都相等
+- aligned vertex feature：
+  - ![alt text](image-177.png)
+  - 首先使用2d cnn处理图像，得到图像的feature map
+  - 然后将mesh使用3d到2d的投影算子，将其投影到2d图像上，得到mesh的每个顶点在2d图像上的坐标
+  - 使用双线性插值获得每个顶点的feature
+- loss function：
+  - ![alt text](image-178.png)
+  - 因为相同的3d shape可能有不同的mesh表示，所以我们需要loss function对mesh的不同表示形式无关，而是对真实的3d shape进行建模
+  - 方法是转换成点云的CD距离：在预测的mesh和ground truth mesh中采样若干个点构成点云，然后计算这两个点云之间的CD距离作为loss；ground truth mesh采样的点云是预先处理好的，而预测mesh的采样是实时进行的
+- ![alt text](image-179.png)
+
+## metrics
+### chamfer distance
+1. 将预测的3d shape和ground truth 3d shape转换成点云（通过采样）
+2. 计算两个点云之间的CD距离
+
+### F1 score
+![alt text](image-180.png)
+
+### camera system
+#### canonical coordinates & view coordinates
+![alt text](image-181.png)
+
+- canonical coordinates：规范化的坐标，即将3d shape的坐标规范化到一个固定的范围内，比如[-1, 1]，这样不同的3d shape就可以放在同一个坐标系中进行比较；但是问题是这样可能让模型过拟合，导致模型对新样本的泛化能力不强
+
+## dataset
+### object-centric 3d dataset
+- ShapeNet
+- pix3d
+![alt text](image-182.png)
+
+### mesh RCNN
+![alt text](image-183.png)
+
+# L18
+video = 2d image + time
+
+a video is a sequence of images，4d tensor：T * C * H * W
+
+> images: recognize objects
+> videos: recognize actions
+
+problem：videos are big. videos are ~30 frames per second (fps)，所以视频过大导致无法将它放入gpu中
+
+所以实际操作中，通常只处理短时间的低帧视频
+## video classification
+input：video，output：classification label
+
+training on clips:
+- raw video: long, high FPS
+- training: train model to classify short clips with low FPS
+- testing: run model on different clips, average the predictions
+
+### single-frame cnn
+单独对每一帧进行分类，然后对所有帧的分类结果进行平均
+
+虽然看起来不是一个好想法（因为它忽略了video的时序特征），但实际上效果还不错
+### late fusion with FC layers
+![alt text](image-184.png)
+仍然是对每一帧进行cnn操作，但是结合一小段时间的帧，将它们的特征拼接在一起再flatten，然后通过一个全连接层进行分类
+
+### late fusion with pooling
+![alt text](image-185.png)
+
+问题：忽略了不同帧之间的比较；
+
+模型很难捕捉到相邻帧之间的动作变化信息，因为模型还是对单独帧进行操作，再对一小段时间上使用average pooling，如果动作是一个周期性的运动，那么一段时间的平均反而提取不到有效信息，而忽略了相邻帧之间的变化信息；
+
+比如跑步，相邻帧可能只是脚步上有细微的变化，但就是这种变化导致了这个动作是跑步而不是站立，但模型无法识别出这种变化
+
+### early fusion
+![alt text](image-186.png)
+将一段时间内的所有帧拼接在一起，然后执行2d cnn操作，得到特征向量，然后通过全连接层进行分类
+
+### 3d cnn
+![alt text](image-187.png)
+
+### reception field of the three methods
+![alt text](image-188.png)
+
+### 2d conv VS 3d conv
+#### 2d conv
+![alt text](image-189.png)
+
+把通道数和时间维度合并在一起，然后进行2d卷积操作，这样其实相当于一开始就将所有时间序列的特征融合在一起
+
+这也导致了一个问题，虽然可以捕捉到相邻帧的信息，但因为一开始就统合了所有帧的信息，其实是不利于捕捉局部的、短时间内的动作变化的，或者说如果需要捕捉许多局部的变化，那么就需要加多filter的数量
+
+#### 3d conv
+![alt text](image-190.png)
+
+还有一个良好的性质：我们可以将每个filter随时间的变化可视化出来，看一下它究竟在识别什么特征
+
+### dataset
+- sports-1M
+
+### C3D
+vgg的3d版本
+
+vgg：
+- 3 * 3的卷积核，stride = 1，padding = 1
+- 2 * 2的max pooling，stride = 2
+- conv-conv-pool, conv-conv-pool, ...
+
+C3D：
+- 3d conv：3 * 3 * 3的卷积核，stride = 1，padding = 1
+- 3d max pooling：2 * 2 * 2的max pooling，stride = 2
+- conv-conv-pool, conv-conv-pool, ...
+- 缺点是计算代价太大了
+
+### optical flow
+人类可以很轻易地从姿态信息中识别出动作，甚至不需要看到完整的图像，只需要看到关键点的位置信息就可以了
+
+measuring motion：
+![alt text](image-191.png)
+
+optical flow：对于相邻帧，计算每个像素点的位移
+
+#### two-stream network
+![alt text](image-192.png)
+- spatial stream：对每一帧进行2d cnn操作，得到特征向量，然后通过全连接层进行分类
+- temporal stream：对相邻帧计算optical flow，得到T - 1个optical flow，每个optical flow为2 * H * W（每个像素点对应一个(x,y)位移矢量），然后将这些optical flow拼接在一起，得到[2 * (T - 1)] * H * W的特征向量，然后通过2d cnn操作、全连接层等等，得到分类结果
+- fusion：将两个stream的分类结果融合在一起
+
+### recurrent convolutional network
+![alt text](image-193.png)
+
+![alt text](image-194.png)
+或者可以将原始的rnn结果换成lstm或gru
+
+问题：rnn的计算代价太大，因为不能并行
+
+### spatio-temporal self-attention (Nonlocal Block)
+![alt text](image-195.png)
+
+### I3D
+inflating 2d network to 3d
+
+idea：选择一个2d cnn网络结构，将所有的2d cnn换成3d cnn，并且有一个关键步骤：我们可以用已经训练好的2d cnn的权重来初始化3d cnn的权重，方法是把2d cnn的权重复制到3d cnn的所有时间维度上，即假设3d cnn的时间维度是T，那么我们将2d cnn的权重复制T份，然后将这些权重初始化到3d cnn中
+
+这让我们可以进行迁移学习：训练一个好用的2d cnn模型，也能对3d cnn模型有价值
+
+### slowfast network
+![alt text](image-196.png)
+
+## conclusion
+![alt text](image-197.png)
 
 
+# L19
+generative model --part 1
+## supervised learning VS unsupervised learning
+- supervised learning：数据集中有原始数据和label，label是我们预期的结果
+- unsupervised learning：数据集中只有原始数据，没有label，我们需要从数据中学习到一些有用的信息；e.g. clustering, dimensionality reduction, density estimation, generative model etc.
 
+## discriminative model VS generative model
+- discriminative model：给定输入x，预测输出y，即学习一个概率分布函数p(y|x)
+- generative model：学习数据的分布，即学习一个概率分布函数p(x)，或者称作密度函数p(x)
+- conditional generative model：给定条件y，生成x，即学习条件概率分布函数p(x|y)
+
+- discriminative model：
+  - 容易被数据攻击，因为它们没有能力辨别数据中是否存在不合理，而是单纯地归一化地输出label空间中的概率分布；
+  - label之间竞争概率
+- generative model：
+  - 需要学习到深层次的东西，因为它要在更加广阔、复杂的样本空间中生成数据；
+  - 图片之间竞争概率
+  - 需要辨别不合理的输入
+
+三者的关系：conditional generative model可以由generative model和discriminative model组合而成
+![alt text](image-198.png)
+
+3种模型能完成的任务：
+![alt text](image-199.png)
+
+### what is generative model
+生成式模型是一种概率模型，通过这个模型我们可以生成不在训练集数据中的新数据；它需要描述一个数据的概率，比如如果数据样本是图像，那么它需要描述组成这张图像的所有像素点组合的概率，然后通过这个概率分布，我们可以生成新的“有效的”图像
+
+就比如我们用很多猫的图片训练一个生成式模型，生成式模型学习到了猫的概率分布，那么我们就可以通过采样生成一张新的猫的图片
+
+可以说，训练集种的所有图像都是一个真实的 __观测__ ，而生成式模型学习到的是这些观测背后的 __概率分布__ ，这个概率分布可以用来生成新的观测；比如我们预测股市走向也是一种生成式模型，给定几个观测点，希望预测未来的走势，其实也就相当于求出一个合适的概率分布函数，这个函数代表了股市走向的特征，然后根据这个函数，我们可以生成未来的走势
+
+这也是为什么生成式模型更加复杂，我们必须搞清楚样本空间是个什么样子，有什么样的概率分布，而判别式模型只需要搞清楚样本空间到label空间的一个映射，在label空间中输出，而label空间往往是比样本空间小很多的
+
+生成式模型的关键点：
+1. 我们有一份数据集
+2. 我们假设这份数据集服从某个未知的分布f
+3. 我们生成一个模型g，去模仿这个分布f
+4. 我们希望模型g能够生成和数据集相似的数据
+
+## generative model的种类
+![alt text](image-200.png)
+
+## autoregressive model
+![alt text](image-201.png)
+
+- 显示地定义样本空间的概率分布函数：p(x) = f(x, W)，p(x)的意思是出现x的概率；f是显示地决定的
+- 给定数据集x1, x2, x3, ... ，我们希望拟合参数W，让p(x)尽可能大
+- 我们把样本x看作一个序列，x = (x1, x2, x3, ...)，那么我们可以将p(x)分解为p(x1) * p(x2|x1) * p(x3|x1, x2) * ...，然后将生成式模型看作一个regressive model，逐步输出每个xi的概率
+
+![alt text](image-202.png)
+
+### pixelRNN
+![alt text](image-203.png)
+使用rnn逐像素生成图片，每个像素点的生成都依赖于前一个和上一个像素点
+
+问题：太慢了
+
+### pixelCNN
+![alt text](image-204.png)
+
+## variational autoencoder
+![alt text](image-205.png)
+
+- 我们没有显式地定义这个概率分布函数，我们也无法显式地获得它地值
+- 但是我们可以计算出这个概率分布函数的一个下界，然后通过最大化这个下界来训练模型
+
+### autoencoder (nonvariational)
+![alt text](image-206.png)
+unsupervised learning的一种方法，目的是学习到数据的特征表示
+
+训练一个encoder和一个decoder，encoder输入原始数据，输出特征，decoder输入特征，输出原始数据，然后我们期望encoder的输入和decoder的输出尽可能接近；训练完成后，我们可以将encoder用作其他任务的特征提取器
+
+![alt text](image-207.png)
+一个可行的pipeline如上，使用L2距离来规范化encoder的输入和decoder的输出
+
+当然有一个问题是我们不希望模型学习到一个恒等变换函数，所以我们需要将中间的feature限制在一个较低的维度上
+
+这样也带来了问题：由于有特征空间的维度的限制（需要小于输入图片像素的数量），模型的效果也会受到限制
+
+### variational autoencoder
+![alt text](03970adff35c3130951491abedf4a85.jpg)
+![alt text](5aca4d595904515fcd94722e18a5c0f.jpg)
+- 我们假设数据服从一个潜在的分布，即每个样本x对应于一个隐变量z，x由z生成
+- 不同于autoencoder，我们不假设z是一个确定的值，而是假设z服从一个概率分布，即z ~ P(z)，这样我们能更精确地描述数据的分布
+  - 举个例子，我们描述一个人，其中一个人的身高是人的隐变量中的一部分，显然让人的身高取值处在一定范围内要比给人的身高一个确定的值更加合理，也可以生成更加精细、合理的图片，所以我们应该让人的身高服从一个概率分布
+  - 在预测的时候，我们可以在隐变量空间中采样生成z，然后输入decoder生成数据x
+- 我们的目的是最大化P(x)，即最大化观测数据的似然概率；由于x可以由z生成，那么我们需要遍历隐空间z，将所有z生成x的概率求和，我们需要最大化这个概率，即最大化P(x) = ΣP(x|z)P(z)；假设隐空间是连续的，那么求和变为积分，我们要最大化P(x) = ∫P(x|z)P(z)dz
+  - P(z)我们可以假设它服从高斯分布，是好解的
+  - P(x|z)我们可以用一个神经网络（这个神经网络就是decoder）来拟合，也是好解的
+  - 但是问题是我们无法计算积分，因为隐空间可能非常大，我们无法遍历所有z
+- 所以我们考虑采用贝叶斯公式：P(x) = P(x|z)P(z) / P(z|x)
+  - 分子的两项前面讨论过
+  - 分母的一项我们可以通过训练一个神经网络（这个神经网络就是encoder）来拟合，即学习一个q(z|x)，使得P(z|x) ~ q(z|x)
+
+![alt text](image-208.png)
+ 
+# L20
+generative model --part 2
+## variational autoencoder
+前提假设：
+- 我们假设潜变量服从一个对角高斯分布，即假设潜变量是一个m维的向量[z1, z2, ..., zm]，它们服从一个m维的联合高斯分布，但是这个m维的联合分布的协方差矩阵是一个对角阵，即每个维度之间是相互独立的，即P(zi) = N(μi, σi^2)
+
+![alt text](image-209.png)
+训练步骤：
+- 训练一个encoder网络，输入x，输出潜变量z的μ和σ，如果z为m维向量，则μ和σ也是m维向量；这个网络的目的是学习到一个q(z|x)，q(zi|x) = N(μi, σi^2)
+- 我们假定一个先验的高斯分布P(z) = N(0, I)，即每个维度服从标准正态分布，我们希望让P(z)和q(z|x)尽可能接近，即让q(z|x)尽可能接近N(0, I) ---> 损失函数中的第二项：KL divergence
+- 在encoder的output中采样得到z
+- 训练一个decoder网络，输入z，输出x的μ和σ，这个网络的目的是学习到一个p(x|z)，即给定z，生成x的概率分布
+- encoder的输入x应该在decoder输出的概率分布上有一个较大的概率 ---> 损失函数中的第一项：log likelihood
+
+### fully-connected VAE
+![alt text](image-213.png)
+
+### generating data
+![alt text](image-210.png)
+只用decoder生成数据 
+
+### edit images
+![alt text](image-211.png)
+
+### summary
+![alt text](image-212.png)
+
+### additional note
+![alt text](Note-28.jpg) ![alt text](Note-29.jpg) ![alt text](Note-30.jpg) ![alt text](Note-31.jpg) ![alt text](Note-32.jpg) ![alt text](Note-33.jpg) ![alt text](Note-34.jpg) ![alt text](Note-35.jpg) ![alt text](Note-36.jpg) ![alt text](Note-37.jpg)
+![alt text](Note-38.jpg) ![alt text](Note-39.jpg) ![alt text](Note-40.jpg)
+## generative adversarial network
+![alt text](image-214.png)
+- 我们假设真实世界的图像服从一个分布p_data(x)，虽然我们没法直接得到这个分布，但是我们可以从这个分布中采样，采样的结果就是训练集中的图像
+- 我们假设也存在一个隐变量z，服从一个先验分布p(z)，我们希望通过这个隐变量z生成图像，所以我们采样得到隐变量z然后将其输入到一个生成器网络G中，生成式网络会基于一个分布p_g生成图像，即x = G(z)，我们希望这个分布p_g尽可能接近真实世界的分布p_data
+- 我们还有一个判别器网络D，它的目的是判别一个图像是真实的还是生成的，即D(x)表示x是真实的概率，D(G(z))表示G(z)是真实的概率，我们希望D(x)尽可能接近1，D(G(z))尽可能接近0
+- 同时我们希望生成器G生成的图像能够欺骗判别器D，即D(G(z))尽可能接近1
+- 即生成器G希望生成的图像能够欺骗判别器D，而判别器D希望能够正确地判别真实图像和生成图像
+
+### 训练GAN
+![alt text](image-215.png)
+![alt text](image-216.png)
+- 使用minimax game来训练这个网络，即生成器G希望最小化V，判别器D希望最大化V
+- 使用联合训练的方式，即先训练判别器D，然后固定D的参数，训练生成器G，然后固定G的参数，再训练D，如此循环
+
+![alt text](image-217.png)
+梯度消失问题：训练开始时生成器G的效果可能是很差的，所以D(G(z))趋近于0，log(1 - D(G(z)))趋近于0，画出函数图像可以看出来，梯度会趋于0，这样就会导致梯度消失，生成器G无法得到有效的梯度
+
+解决方法：使用-log(D(G(z)))来代替log(1 - D(G(z)))，我们希望最小化-log(D(G(z)))，或者是最大化log(D(G(z)))，这样就能避免梯度消失问题；因为从函数图像上来看，从一开始它能得到很大得梯度
+
+
+### GAN: Vector Math
+![alt text](image-218.png)
+
+### Conditional GAN
+![alt text](image-219.png)
+
+# L21
+reinforcement learning（强化学习）
+
+## what is reinforcement learning
+![alt text](image-220.png)
+- agent：决策者，它在一个环境中，根据环境的状态来做出决策，然后得到一个reward，根据这个reward来调整自己的策略
+- environment：agent所处的环境，它会根据agent的决策来改变自己的状态，然后给出一个reward
+- state：环境的状态，agent根据这个状态来做出决策
+- action：agent的决策，它会根据环境的状态来做出一个决策，然后得到一个reward
+- reward：环境给出的奖励，它是一个标量，表示agent做出的决策的好坏
+- goal：agent的目标，它希望通过调整自己的策略，使得在环境中得到的reward最大
+
+1. agent看到environment的state
+2. agent根据state做出action
+3. environment根据action改变自己的状态，同时environment给出reward
+
+reinforcement learning的几个特点：
+- 环境的状态转移、reward的计算可能是随机的、充满噪声的；相同的state和action可能会导致不同的reward
+- reward可能是稀疏的，即agent在很长时间内没有得到reward，然后突然得到一个reward
+- reward可能是延迟的，即agent在某个时间点做出了一个决策，但是它得到的reward是在很长时间后才得到的
+- agent很难通过reward来判断自己刚刚做的决策是好是坏，因为reward可能是延迟的
+- 不可微分的，因为我们无法计算出reward对于action的导数
+- 不稳定性，因为agent的决策会影响到环境的状态，而环境的状态又会影响到agent的决策，这样就会导致agent的决策不稳定
+
+### example
+#### cart-pole problem
+![alt text](image-221.png)
+
+#### robot locomotion
+![alt text](image-222.png)
+
+#### atari games
+![alt text](image-223.png)
+
+#### go
+![alt text](image-224.png)
+
+## markov decision process：MDP
+(S,A,R,P,γ)：
+- S：所有可能的state
+- A：所有可能的action
+- R：给定(state,action)，输出reward的概率分布
+- P：给定(state,action)，输出转移到各个状态的概率
+- γ：reward的折扣因子，每个时间点的reward都会乘以γ的t次方，t是时间步数，即每经过一个时间步，reward都会乘以γ
+
+agent总是根据一个policy Π来执行action，这个policy Π只与当前状态有关，而与之前的状态无关
+
+goal：最优化policy Π，使得获得的总的reward最大化，即让随时间积累的总的reward最大化
+
+MDP：
+- t = 0，环境随机呈现一个state s0
+- 对于之后的某个时间点t：
+  - agent选择一个action at，at~Π(a|st)
+  - environment根据st和at，给出一个reward rt，rt~R(r|st,at)
+  - environment根据st和at，给出一个新的state st+1，st+1~P(s|st,at)
+  - agent获得reward rt和新的state st+1
+
+由于过程中充满随机性，我们往往最大化的是一个期望reward
+![alt text](image-225.png)
+
+### value function and Q function
+value function：V(s) = E[Rt|st = s]，即在state s下，agent能够获得的期望reward（总的）；它衡量了agent在某个state下的好坏；其中Rt是0~t的reward的总和，Rt = Σγ^t * rt
+
+Q function：Q(s,a) = E[Rt|st = s, at = a]，即在state s下，agent采取action a后能够获得的期望reward（总的）；它衡量了agent在某个state下采取某个action的好坏
+
+### Bellman equation
+optimal Q function：Q*(s,a) = maxQ(s,a)，在policy中求最大值，即不同的policy中，在state s下，agent采取action a后能够获得的最大期望reward（总的）
+
+Π*：最优的policy，使得agent在每个state下采取的action都是最优的，即Π*(s) = argmaxQ(s,a)，在所有的action中求最大值
+
+Bellman equation：
+![alt text](image-226.png)
+
+可以证明：最佳的Q function等价于此Q function满足Bellman equation
+
+所以我们可以从一个随机的Q function开始，用Bellman equation来迭代更新Q function，直到Q function收敛
+
+可以证明，Q function最终会收敛到最优的Q function
+
+但是困难之处在于，我们需要记录所有的Q(s,a)，而state和action可能是非常大的，这个空间是无法存储的
+
+解决办法：使用一个神经网络来拟合Q function，即Q(s,a) = f(s,a,W)，W是神经网络的参数
+
+### Deep Q-Learning
+![alt text](image-227.png)
+
+deep Q-learning for atari games： 
+![alt text](image-228.png)
+
+## Q-learning
+训练一个神经网络，来根据每个(state,action)预测未来的reward
 
 
 

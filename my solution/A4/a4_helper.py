@@ -45,12 +45,13 @@ class VOC2007DetectionTiny(torch.utils.data.Dataset):
             self._attempt_download(dataset_dir)
 
         # fmt: off
-        voc_classes = [
-            "aeroplane", "bicycle", "bird", "boat", "bottle", "bus",
-            "car", "cat", "chair", "cow", "diningtable", "dog",
-            "horse", "motorbike", "person", "pottedplant", "sheep",
-            "sofa", "train", "tvmonitor"
-        ]
+        # voc_classes = [
+        #     "aeroplane", "bicycle", "bird", "boat", "bottle", "bus",
+        #     "car", "cat", "chair", "cow", "diningtable", "dog",
+        #     "horse", "motorbike", "person", "pottedplant", "sheep",
+        #     "sofa", "train", "tvmonitor"
+        # ]
+        voc_classes = ["neck"]
         # fmt: on
 
         # Make a (class to ID) and inverse (ID to class) mapping.

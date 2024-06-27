@@ -41,7 +41,15 @@ def compute_saliency_maps(X, y, model):
     # Hint: X.grad.data stores the gradients                                     #
     ##############################################################################
     # Replace "pass" statement with your code
-    pass
+    out = model(X)
+    loss = torch.nn.functional.cross_entropy(input=out, target=y, reduction="sum")
+    loss.backward()
+    saliency = X.grad.data.abs().max(dim=1)[0]
+    # N = X.shape[0]
+    # output = model(X)
+    # loss = torch.sum(output[torch.arange(N), y])
+    # loss.backward()
+    # saliency, _ = torch.max(X.grad.data.abs(), dim=1)
     ##############################################################################
     #               END OF YOUR CODE                                             #
     ##############################################################################

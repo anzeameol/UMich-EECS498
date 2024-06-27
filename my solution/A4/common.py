@@ -196,7 +196,7 @@ def get_fpn_location_coords(
         )
         row_tensor = row_tensor.reshape(-1)
         col_tensor = col_tensor.reshape(-1)
-        idx_tensor = torch.stack([col_tensor, row_tensor], dim=1).reshape(-1, 2)
+        idx_tensor = torch.stack([row_tensor, col_tensor], dim=1).reshape(-1, 2)
         idx_tensor = (idx_tensor + 0.5) * level_stride
         location_coords[level_name] = idx_tensor
         ######################################################################
