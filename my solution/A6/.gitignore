@@ -1,3 +1,6 @@
 MNIST_data
 __pycache__
 datasets
+test
+styles
+style-transfer-checks.npz

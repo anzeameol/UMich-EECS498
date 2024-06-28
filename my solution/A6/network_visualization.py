@@ -92,7 +92,19 @@ def make_adversarial_attack(X, target_y, model, max_iter=100, verbose=True):
     # You can print your progress over iterations to check your algorithm.       #
     ##############################################################################
     # Replace "pass" statement with your code
-    pass
+    model.eval()
+    for i in range(max_iter):
+        out = model(X_adv)
+        _, predict = torch.max(out, dim=-1)
+        if predict == target_y:
+            break
+        score = out[:, target_y]
+        score.backward()
+        with torch.no_grad():
+            grad = X_adv.grad.data
+            dX = learning_rate * grad / ((grad**2).sum() ** 0.5)
+            X_adv += dX
+            X_adv.grad.zero_()
     ##############################################################################
     #                             END OF YOUR CODE                               #
     ##############################################################################
@@ -127,7 +139,15 @@ def class_visualization_step(img, target_y, model, **kwargs):
     # after each step.                                                     #
     ########################################################################
     # Replace "pass" statement with your code
-    pass
+    model.eval()
+    out = model(img)
+    score = out[:, target_y]
+    loss = score - l2_reg * ((img**2).sum() ** 0.5)
+    loss.backward()
+    with torch.no_grad():
+        grad = img.grad.data
+        img += learning_rate * grad
+        img.grad.zero_()
     ########################################################################
     #                             END OF YOUR CODE                         #
     ########################################################################
